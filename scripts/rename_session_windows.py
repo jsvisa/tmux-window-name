@@ -251,7 +251,12 @@ def rename_window(
         window_name = window_name.replace(HOME_DIR, "~")
 
     # use the basename of the process
-    window_name = window_name.split(" ")[0].split("/")[-1][:max_name_len]
+    parts = window_name.split(" ", 1)
+    process = parts[0].split("/")[-1]
+    window_name = process
+    if len(parts) > 1:
+        window_name += " " + parts[1]
+    window_name = window_name[:max_name_len]
 
     server.cmd("rename-window", "-t", window_id, window_name)
     set_window_tmux_option(
