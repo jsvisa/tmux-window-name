@@ -115,7 +115,12 @@ def enable_user_rename_hook(server: Server):
         "set-hook",
         "-g",
         f"after-rename-window[{HOOK_INDEX}]",
-        f'if-shell "[ #{{n:window_name}} -gt 0 ]" "set -w @tmux_window_name_enabled 0" "set -w @tmux_window_name_enabled 1; run-shell "{current_file}"',
+        f"""
+if-shell "[ #{{n:window_name}} -gt 0 ]"
+    "set -w @tmux_window_name_enabled 0"
+    "set -w @tmux_window_name_enabled 1;
+run-shell "{current_file}"
+""",
     )
 
 
@@ -379,7 +384,8 @@ def main():
     parser.add_argument(
         "--post_restore",
         action="store_true",
-        help="Restore tmux enabled option from automatic-rename, for internal use, enables rename hook too",
+        help="Restore tmux enabled option from automatic-rename, "
+        "for internal use, enables rename hook too",
     )
 
     args = parser.parse_args()
