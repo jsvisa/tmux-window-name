@@ -20,6 +20,9 @@ HOOK_INDEX = 8921
 
 HOME_DIR = os.path.expanduser("~")
 
+# Cache for global options to avoid repeated queries
+_global_options_cache = {}
+
 
 def get_option(server: Server, option: str, default: Any) -> Any:
     out = server.cmd("show-option", "-gv", f"{OPTIONS_PREFIX}{option}").stdout
@@ -27,6 +30,14 @@ def get_option(server: Server, option: str, default: Any) -> Any:
         return default
 
     return eval(out[0])
+
+
+def get_option_cached(server: Server, option: str, default: Any) -> Any:
+    """Cached version of get_option for global options that don't change during execution"""
+    cache_key = f"{OPTIONS_PREFIX}{option}"
+    if cache_key not in _global_options_cache:
+        _global_options_cache[cache_key] = get_option(server, option, default)
+    return _global_options_cache[cache_key]
 
 
 def set_option(server: Server, option: str, val: str):
@@ -78,6 +89,26 @@ def set_window_tmux_option(
     arguments.append(value)
 
     server.cmd(*arguments)
+
+
+def get_all_windows_option(server: Server, option: str, default: Any) -> dict:
+    """
+    Bulk fetch a window option for all windows in one tmux command.
+    Returns a dict mapping window_id to option value.
+    """
+    out = server.cmd("list-windows", "-F", f"#{{window_id}}:#{{#{option}}}").stdout
+    result = {}
+    for line in out:
+        if ":" in line:
+            window_id, value = line.split(":", 1)
+            if value:
+                try:
+                    result[window_id] = eval(value)
+                except:
+                    result[window_id] = default
+            else:
+                result[window_id] = default
+    return result
 
 
 def post_restore(server: Server):
@@ -173,7 +204,7 @@ class Options:
             return f.default
 
         fields_values = {
-            field.name: get_option(server, field.name, default_field_value(field))
+            field.name: get_option_cached(server, field.name, default_field_value(field))
             for field in fields.values()
         }
 
@@ -258,13 +289,12 @@ def rename_window(
         window_name += " " + parts[1]
     window_name = window_name[:max_name_len]
 
-    server.cmd("rename-window", "-t", window_id, window_name)
-    set_window_tmux_option(
-        server, window_id, "automatic-rename-format", window_name
-    )  # Setting format the window name itself to make automatic-rename rename to to the same name
-    set_window_tmux_option(
-        server, window_id, "automatic-rename", "on"
-    )  # Turn on automatic-rename to make resurrect remeber the option
+    # Batch all three operations into a single tmux command for performance
+    server.cmd(
+        "rename-window", "-t", window_id, window_name, ";",
+        "set-option", "-wq", "-t", window_id, "automatic-rename-format", window_name, ";",
+        "set-option", "-wq", "-t", window_id, "automatic-rename", "on"
+    )
 
 
 def get_panes_programs(session: Session, options: Options):
@@ -291,14 +321,15 @@ def rename_windows(server: Server):
         current_session = get_current_session(server)
         options = Options.from_options(server)
 
+        # Bulk fetch window enabled status for all windows (single tmux call)
+        enabled_map = get_all_windows_option(server, f"{OPTIONS_PREFIX}enabled", 1)
+
         panes_programs = get_panes_programs(current_session, options)
         panes_with_programs = [p for p in panes_programs if p.program is not None]
         panes_with_dir = [p for p in panes_programs if p.program is None]
 
         for pane in panes_with_programs:
-            enabled_in_window = get_window_option(
-                server, pane.info.window_id, "enabled", 1
-            )
+            enabled_in_window = enabled_map.get(pane.info.window_id, 1)
             if not enabled_in_window:
                 continue
 
@@ -320,9 +351,7 @@ def rename_windows(server: Server):
         exclusive_paths = get_exclusive_paths(panes_with_dir)
 
         for p, display_path in exclusive_paths:
-            enabled_in_window = get_window_option(
-                server, p.info.window_id, "enabled", 1
-            )
+            enabled_in_window = enabled_map.get(p.info.window_id, 1)
             if not enabled_in_window:
                 continue
 
