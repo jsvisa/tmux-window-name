@@ -21,7 +21,8 @@ class DisplayedPath:
 
     @staticmethod
     def from_pane(pane: Pane):
-        path = Path(str(pane.info.pane_current_path))
+        # pane.info is now a dict instead of TmuxPane
+        path = Path(str(pane.info["pane_current_path"]))
         return DisplayedPath(pane, path, Path(path.name))
 
 

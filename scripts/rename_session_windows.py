@@ -166,6 +166,7 @@ def tmux_guard(server: Server) -> Iterator[bool]:
     try:
         if not already_running:
             set_option(server, "running", "1")
+            # Must disable hook so our automated renames don't trigger it
             disable_user_rename_hook(server)
 
         yield already_running
@@ -203,8 +204,27 @@ class Options:
                 return f.default_factory()
             return f.default
 
+        # Bulk fetch all options in one call for performance
+        cache_key = "all_options_cached"
+        if cache_key not in _global_options_cache:
+            out = server.cmd("show-options", "-g").stdout
+            options_dict = {}
+            for line in out:
+                # Format: @tmux_window_name_option_name value
+                if line.startswith(OPTIONS_PREFIX):
+                    parts = line.split(" ", 1)
+                    if len(parts) == 2:
+                        key = parts[0].replace(OPTIONS_PREFIX, "")
+                        try:
+                            options_dict[key] = eval(parts[1])
+                        except:
+                            pass
+            _global_options_cache[cache_key] = options_dict
+
+        options_dict = _global_options_cache[cache_key]
+
         fields_values = {
-            field.name: get_option_cached(server, field.name, default_field_value(field))
+            field.name: options_dict.get(field.name, default_field_value(field))
             for field in fields.values()
         }
 
@@ -223,16 +243,17 @@ def parse_shell_command(shell_cmd: List[bytes]) -> Optional[str]:
 
 
 def get_current_program(
-    running_programs: List[bytes], pane: TmuxPane, options: Options
+    running_programs: List[bytes], pane: dict, options: Options
 ) -> Optional[str]:
-    if pane.pane_pid is None:
+    pane_pid = pane.get("pane_pid")
+    if pane_pid is None:
         raise ValueError(f"Pane id is none, pane: {pane}")
 
     for program in running_programs:
         program = program.split()
 
         # if pid matches parse program
-        if int(program[0]) == int(pane.pane_pid):
+        if int(program[0]) == int(pane_pid):
             program = program[1:]
             program_name = program[0].decode()
 
@@ -265,14 +286,31 @@ def get_program_if_dir(program_line: str, dir_programs: List[str]) -> Optional[s
     return None
 
 
-def get_session_active_panes(session: Session) -> List[TmuxPane]:
-    session_windows_ids = [window.window_id for window in session.windows]
+def get_session_active_panes(server: Server, session_id: str) -> List[dict]:
+    """Get active panes for a session using direct tmux query (faster than libtmux)"""
+    # Use format strings to get all needed pane info in one call
+    out = server.cmd(
+        "list-panes",
+        "-s",
+        "-t",
+        session_id,
+        "-F",
+        "#{pane_id}:#{pane_active}:#{pane_pid}:#{pane_current_path}:#{window_id}",
+    ).stdout
 
-    return [
-        p
-        for p in session.server.panes
-        if p.pane_active == "1" and p.window_id in session_windows_ids
-    ]
+    panes = []
+    for line in out:
+        parts = line.split(":", 4)
+        if len(parts) == 5 and parts[1] == "1":  # only active panes
+            panes.append(
+                {
+                    "pane_id": parts[0],
+                    "pane_pid": parts[2],
+                    "pane_current_path": parts[3],
+                    "window_id": parts[4],
+                }
+            )
+    return panes
 
 
 def rename_window(
@@ -291,14 +329,29 @@ def rename_window(
 
     # Batch all three operations into a single tmux command for performance
     server.cmd(
-        "rename-window", "-t", window_id, window_name, ";",
-        "set-option", "-wq", "-t", window_id, "automatic-rename-format", window_name, ";",
-        "set-option", "-wq", "-t", window_id, "automatic-rename", "on"
+        "rename-window",
+        "-t",
+        window_id,
+        window_name,
+        ";",
+        "set-option",
+        "-wq",
+        "-t",
+        window_id,
+        "automatic-rename-format",
+        window_name,
+        ";",
+        "set-option",
+        "-wq",
+        "-t",
+        window_id,
+        "automatic-rename",
+        "on",
     )
 
 
-def get_panes_programs(session: Session, options: Options):
-    session_active_panes = get_session_active_panes(session)
+def get_panes_programs(server: Server, session_id: str, options: Options):
+    session_active_panes = get_session_active_panes(server, session_id)
     try:
         running_programs = subprocess.check_output(
             ["ps", "-a", "-oppid,command"]
@@ -318,18 +371,18 @@ def rename_windows(server: Server):
         if already_running:
             return
 
-        current_session = get_current_session(server)
+        session_id = get_current_session(server)
         options = Options.from_options(server)
 
         # Bulk fetch window enabled status for all windows (single tmux call)
         enabled_map = get_all_windows_option(server, f"{OPTIONS_PREFIX}enabled", 1)
 
-        panes_programs = get_panes_programs(current_session, options)
+        panes_programs = get_panes_programs(server, session_id, options)
         panes_with_programs = [p for p in panes_programs if p.program is not None]
         panes_with_dir = [p for p in panes_programs if p.program is None]
 
         for pane in panes_with_programs:
-            enabled_in_window = enabled_map.get(pane.info.window_id, 1)
+            enabled_in_window = enabled_map.get(pane.info["window_id"], 1)
             if not enabled_in_window:
                 continue
 
@@ -342,7 +395,7 @@ def rename_windows(server: Server):
             pane.program = substitute_name(str(pane.program), options.substitute_sets)
             rename_window(
                 server,
-                str(pane.info.window_id),
+                str(pane.info["window_id"]),
                 pane.program,
                 options.max_name_len,
                 options.use_tilde,
@@ -351,7 +404,7 @@ def rename_windows(server: Server):
         exclusive_paths = get_exclusive_paths(panes_with_dir)
 
         for p, display_path in exclusive_paths:
-            enabled_in_window = enabled_map.get(p.info.window_id, 1)
+            enabled_in_window = enabled_map.get(p.info["window_id"], 1)
             if not enabled_in_window:
                 continue
 
@@ -364,16 +417,17 @@ def rename_windows(server: Server):
 
             rename_window(
                 server,
-                str(p.info.window_id),
+                str(p.info["window_id"]),
                 str(display_path),
                 options.max_name_len,
                 options.use_tilde,
             )
 
 
-def get_current_session(server: Server) -> Session:
+def get_current_session(server: Server) -> str:
+    """Get current session ID directly (returns string instead of Session object for performance)"""
     session_id = server.cmd("display-message", "-p", "#{session_id}").stdout[0]
-    return Session(server, session_id=session_id)
+    return session_id
 
 
 def substitute_name(name: str, substitute_sets: List[Tuple]) -> str:
@@ -384,10 +438,10 @@ def substitute_name(name: str, substitute_sets: List[Tuple]) -> str:
 
 
 def print_programs(server: Server):
-    current_session = get_current_session(server)
+    session_id = get_current_session(server)
     options = Options.from_options(server)
 
-    panes_programs = get_panes_programs(current_session, options)
+    panes_programs = get_panes_programs(server, session_id, options)
 
     for pane in panes_programs:
         if pane.program:
