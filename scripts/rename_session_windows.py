@@ -187,8 +187,8 @@ class Options:
     use_tilde: bool = False
     substitute_sets: List[Tuple] = field(
         default_factory=lambda: [
-            (".*python([32])? (.*)/([^/].*)", r"\g<3>"),
-            (".+ipython([32])", r"ipython\g<1>"),
+            (".*python([0-9.]+)? (.*)/([^/].*)", r"\g<3>"),
+            (".+ipython([0-9.]+)?", r"ipython\g<1>"),
             (r"^(/usr)?/bin/(.+)", r"\g<2>"),
             ("(bash) (.+)/(.+[ $])(.+)", r"\g<3>\g<4>"),
         ]
