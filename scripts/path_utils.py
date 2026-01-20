@@ -2,14 +2,12 @@
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Tuple
-
-from libtmux.pane import Pane as TmuxPane
+from typing import Any, Dict, List, Optional, Tuple
 
 
 @dataclass
 class Pane:
-    info: TmuxPane
+    info: Dict[str, Any]  # dict with pane_id, pane_pid, pane_current_path, window_id
     program: Optional[str]
 
 
@@ -21,7 +19,6 @@ class DisplayedPath:
 
     @staticmethod
     def from_pane(pane: Pane):
-        # pane.info is now a dict instead of TmuxPane
         path = Path(str(pane.info["pane_current_path"]))
         return DisplayedPath(pane, path, Path(path.name))
 
@@ -41,6 +38,7 @@ def get_uncommon_path(a: Path, b: Path) -> Tuple[Path, Path]:
     """
     # Go from -1 to -Maximum length to check each part from the end
     # E.g: 'a/dir1/c', 'b/dir1/c' will go [:-1], [:-2] and stop
+    x = 0  # default: return full paths if loop doesn't execute (empty paths)
     for x in range(-1, -max(len(a.parts), len(b.parts)) - 1, -1):
         try:
             if a.parts[x] != b.parts[x]:

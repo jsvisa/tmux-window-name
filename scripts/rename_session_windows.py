@@ -9,9 +9,61 @@ from typing import Any, Iterator, List, Optional, Tuple
 from argparse import ArgumentParser
 from contextlib import contextmanager
 
-from libtmux.server import Server
-
 from path_utils import get_exclusive_paths, Pane
+
+
+class CmdResult:
+    """Simple result object to mimic libtmux's cmd result"""
+    def __init__(self, stdout: List[str]):
+        self.stdout = stdout
+
+
+class Server:
+    """Minimal tmux server wrapper that doesn't require libtmux"""
+
+    def __init__(self, socket_name: Optional[str] = None, socket_path: Optional[str] = None):
+        self._socket_name = socket_name
+        self._socket_path = socket_path
+
+    def _build_base_cmd(self) -> List[str]:
+        cmd = ["tmux"]
+        if self._socket_path:
+            cmd.extend(["-S", self._socket_path])
+        elif self._socket_name:
+            cmd.extend(["-L", self._socket_name])
+        return cmd
+
+    def cmd(self, *args: str) -> CmdResult:
+        """Execute a tmux command and return the result"""
+        cmd = self._build_base_cmd() + list(args)
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            stdout = result.stdout.strip().split("\n") if result.stdout.strip() else []
+            return CmdResult(stdout)
+        except Exception:
+            return CmdResult([])
+
+    @property
+    def windows(self) -> List[Any]:
+        """Get list of windows (minimal implementation for post_restore)"""
+        result = self.cmd("list-windows", "-a", "-F", "#{window_id}")
+        windows = []
+        for window_id in result.stdout:
+            if window_id:
+                windows.append(_Window(window_id, self))
+        return windows
+
+
+class _Window:
+    """Minimal window object for compatibility"""
+    def __init__(self, window_id: str, server: "Server"):
+        self.window_id = window_id
+        self._server = server
 
 OPTIONS_PREFIX = "@tmux_window_name_"
 HOOK_INDEX = 8921
