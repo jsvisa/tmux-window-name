@@ -10,8 +10,6 @@ from argparse import ArgumentParser
 from contextlib import contextmanager
 
 from libtmux.server import Server
-from libtmux.session import Session
-from libtmux.pane import Pane as TmuxPane
 
 from path_utils import get_exclusive_paths, Pane
 
