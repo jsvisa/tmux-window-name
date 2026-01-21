@@ -476,8 +476,10 @@ def rename_windows(server: Server):
 
 def get_current_session(server: Server) -> str:
     """Get current session ID directly (returns string instead of Session object for performance)"""
-    session_id = server.cmd("display-message", "-p", "#{session_id}").stdout[0]
-    return session_id
+    result = server.cmd("display-message", "-p", "#{session_id}").stdout
+    if not result:
+        raise RuntimeError("Could not get current session ID. Are you running inside a tmux session?")
+    return result[0]
 
 
 def substitute_name(name: str, substitute_sets: List[Tuple]) -> str:
