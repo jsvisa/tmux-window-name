@@ -14,6 +14,7 @@ from path_utils import get_exclusive_paths, Pane
 
 class CmdResult:
     """Simple result object to mimic libtmux's cmd result"""
+
     def __init__(self, stdout: List[str]):
         self.stdout = stdout
 
@@ -21,7 +22,9 @@ class CmdResult:
 class Server:
     """Minimal tmux server wrapper that doesn't require libtmux"""
 
-    def __init__(self, socket_name: Optional[str] = None, socket_path: Optional[str] = None):
+    def __init__(
+        self, socket_name: Optional[str] = None, socket_path: Optional[str] = None
+    ):
         self._socket_name = socket_name
         self._socket_path = socket_path
 
@@ -61,9 +64,11 @@ class Server:
 
 class _Window:
     """Minimal window object for compatibility"""
+
     def __init__(self, window_id: str, server: "Server"):
         self.window_id = window_id
         self._server = server
+
 
 OPTIONS_PREFIX = "@tmux_window_name_"
 HOOK_INDEX = 8921
@@ -422,6 +427,8 @@ def rename_windows(server: Server):
             return
 
         session_id = get_current_session(server)
+        if not session_id:
+            return
         options = Options.from_options(server)
 
         # Bulk fetch window enabled status for all windows (single tmux call)
@@ -474,11 +481,11 @@ def rename_windows(server: Server):
             )
 
 
-def get_current_session(server: Server) -> str:
+def get_current_session(server: Server) -> Optional[str]:
     """Get current session ID directly (returns string instead of Session object for performance)"""
     result = server.cmd("display-message", "-p", "#{session_id}").stdout
     if not result:
-        raise RuntimeError("Could not get current session ID. Are you running inside a tmux session?")
+        return None
     return result[0]
 
 
@@ -491,6 +498,8 @@ def substitute_name(name: str, substitute_sets: List[Tuple]) -> str:
 
 def print_programs(server: Server):
     session_id = get_current_session(server)
+    if not session_id:
+        return
     options = Options.from_options(server)
 
     panes_programs = get_panes_programs(server, session_id, options)
