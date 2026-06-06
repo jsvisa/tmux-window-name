@@ -335,8 +335,7 @@ def get_program_if_dir(program_line: str, dir_programs: List[str]) -> Optional[s
 
     for p in dir_programs:
         if p == program[0]:
-            program[0] = p
-            return " ".join(program)
+            return p
 
     return None
 
