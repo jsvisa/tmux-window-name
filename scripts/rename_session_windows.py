@@ -249,6 +249,7 @@ class Options:
         ]
     )
     dir_substitute_sets: List[Tuple] = field(default_factory=lambda: [])
+    program_map: dict = field(default_factory=lambda: {})
 
     @staticmethod
     def from_options(server: Server):
@@ -271,7 +272,10 @@ class Options:
                     if len(parts) == 2:
                         key = parts[0].replace(OPTIONS_PREFIX, "")
                         try:
-                            options_dict[key] = eval(parts[1])
+                            value = eval(parts[1])
+                            if isinstance(value, str):
+                                value = eval(value)
+                            options_dict[key] = value
                         except:
                             pass
             _global_options_cache[cache_key] = options_dict
@@ -449,6 +453,7 @@ def rename_windows(server: Server):
                 continue
 
             pane.program = substitute_name(str(pane.program), options.substitute_sets)
+            pane.program = options.program_map.get(pane.program, pane.program)
             rename_window(
                 server,
                 str(pane.info["window_id"]),
@@ -469,6 +474,7 @@ def rename_windows(server: Server):
             )
             if p.program is not None:
                 p.program = substitute_name(p.program, options.substitute_sets)
+                p.program = options.program_map.get(p.program, p.program)
                 display_path = f"{p.program}:{display_path}"
 
             rename_window(
